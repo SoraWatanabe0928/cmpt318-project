@@ -1,0 +1,5 @@
+Best model based on BIC: HMM with 10 states
+BIC: -51716.4284312862
+Log-likelihood: 26532.6939507358
+Normalized train log-likelihood: 0.82656367447775
+Normalized test log-likelihood: 0.491444121460064
