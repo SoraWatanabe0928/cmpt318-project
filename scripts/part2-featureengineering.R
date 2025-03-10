@@ -1,5 +1,4 @@
-# CMPT 318 Term Project - Part II (最終修正版3)
-# Anomaly Detection in Electric Energy Consumption Data
+# Part2 code
 
 # Create necessary directories
 if (!dir.exists("data/processed")) {
@@ -24,7 +23,7 @@ library(ggplot2)   # For plotting
 library(stats)     # For PCA
 library(reshape2)  # For data reshaping
 
-# チェック：ggbiplotがインストールされているか
+
 if (!requireNamespace("ggbiplot", quietly = TRUE)) {
   if (!requireNamespace("devtools", quietly = TRUE)) {
     install.packages("devtools")
@@ -270,7 +269,7 @@ if(length(all_years) >= 4) {
     Sub_metering_3 = test_data$Sub_metering_3
   )
   
-  # デバッグ用出力
+
   cat("Training features dimensions:", dim(train_df), "\n")
   cat("Test features dimensions:", dim(test_df), "\n")
   cat("Selected variables:", paste(colnames(train_df), collapse=", "), "\n")
@@ -322,60 +321,159 @@ cat(paste("\nTraining data dimensions:", paste(dim(train_data), collapse=" x "))
 cat(paste("\nTesting data dimensions:", paste(dim(test_data), collapse=" x ")), 
     file = "output/time_window_info.txt", append = TRUE)
 
-# Step 4: Manual implementation for basic HMM with single response variable
-cat("\nStep 4: Implementing basic HMM with single response variable...\n")
 
-# まず、単一の応答変数でシンプルなHMMを試す
-num_states <- 4
-single_variable <- "Global_intensity"  # 最も重要な変数を選択
-
-cat("Creating simple HMM with", num_states, "states for variable:", single_variable, "\n")
-
-# データフレームの先頭行を確認
-cat("First few rows of single variable data:\n")
-print(head(train_df[[single_variable]]))
-
-tryCatch({
-  # 単一変数のHMMモデルを作成
-  set.seed(123)
-  simple_mod <- depmix(train_df[[single_variable]] ~ 1, nstates = num_states, data = train_df)
+train_multiple_hmms <- function(train_df, test_df, variable, state_range = c(4, 6, 8, 10, 12)) {
+  cat("\nStep 4: Training multiple HMM models with different numbers of states...\n")
   
-  cat("Model created successfully. Fitting model...\n")
-  simple_fitted <- fit(simple_mod, verbose = TRUE)
   
-  # モデル評価
-  train_ll <- logLik(simple_fitted)
-  train_norm_ll <- train_ll / nrow(train_df)
-  
-  cat("Train log-likelihood:", train_ll, "\n")
-  cat("Normalized train log-likelihood:", train_norm_ll, "\n")
-  
-  # テストデータでのモデル評価
-  test_mod <- depmix(test_df[[single_variable]] ~ 1, nstates = num_states, data = test_df)
-  test_mod <- setpars(test_mod, getpars(simple_fitted))
-  fb <- forwardbackward(test_mod)
-  test_ll <- fb$logLike
-  test_norm_ll <- test_ll / nrow(test_df)
-  
-  cat("Test log-likelihood:", test_ll, "\n")
-  cat("Normalized test log-likelihood:", test_norm_ll, "\n")
-  
-  # 結果を保存
-  model_results <- data.frame(
-    Variable = single_variable,
-    States = num_states,
-    TrainLL = train_ll,
-    NormTrainLL = train_norm_ll,
-    TestLL = test_ll,
-    NormTestLL = test_norm_ll
+  results_df <- data.frame(
+    States = integer(),
+    LogLikelihood = numeric(),
+    NormalizedTrainLL = numeric(),
+    BIC = numeric(),
+    TestLL = numeric(),
+    NormalizedTestLL = numeric()
   )
-  write.csv(model_results, "output/model_results.csv", row.names = FALSE)
   
-  # テストデータを10個のサブセットに分割
+ 
+  for(num_states in state_range) {
+    cat("\nTraining HMM with", num_states, "states for variable:", variable, "\n")
+    
+    tryCatch({
+      
+      set.seed(123)
+      hmm_mod <- depmix(train_df[[variable]] ~ 1, nstates = num_states, data = train_df)
+      
+      
+      cat("Fitting model...\n")
+      hmm_fitted <- fit(hmm_mod, verbose = TRUE)
+      
+      
+      train_ll <- logLik(hmm_fitted)
+      train_norm_ll <- train_ll / nrow(train_df)
+      bic <- -2 * train_ll + npar(hmm_fitted) * log(nrow(train_df))
+      
+      #
+      test_mod <- depmix(test_df[[variable]] ~ 1, nstates = num_states, data = test_df)
+      test_mod <- setpars(test_mod, getpars(hmm_fitted))
+      fb <- forwardbackward(test_mod)
+      test_ll <- fb$logLike
+      test_norm_ll <- test_ll / nrow(test_df)
+      
+
+      cat("  Train log-likelihood:", train_ll, "\n")
+      cat("  Normalized train log-likelihood:", train_norm_ll, "\n")
+      cat("  BIC:", bic, "\n")
+      cat("  Test log-likelihood:", test_ll, "\n")
+      cat("  Normalized test log-likelihood:", test_norm_ll, "\n")
+      
+
+      results_df <- rbind(results_df, data.frame(
+        States = num_states,
+        LogLikelihood = train_ll,
+        NormalizedTrainLL = train_norm_ll,
+        BIC = bic,
+        TestLL = test_ll,
+        NormalizedTestLL = test_norm_ll
+      ))
+    }, error = function(e) {
+      cat("Error in training HMM with", num_states, "states:", e$message, "\n")
+    })
+  }
+  
+
+  return(results_df)
+}
+
+
+results <- train_multiple_hmms(train_df, test_df, "Global_intensity", c(4, 6, 8, 10, 12))
+
+
+write.csv(results, "output/hmm_model_comparison.csv", row.names = FALSE)
+
+
+if(nrow(results) > 1) {
+  ll_plot <- ggplot(results, aes(x = States, y = LogLikelihood)) +
+    geom_point() +
+    geom_line() +
+    labs(title = "Log-Likelihood vs. Number of States",
+         x = "Number of States",
+         y = "Log-Likelihood") +
+    theme_minimal()
+  
+  print(ll_plot)
+  ggsave("output/log_likelihood_plot.png", ll_plot, width = 8, height = 6)
+  
+
+  bic_plot <- ggplot(results, aes(x = States, y = BIC)) +
+    geom_point() +
+    geom_line() +
+    labs(title = "BIC vs. Number of States",
+         x = "Number of States",
+         y = "BIC") +
+    theme_minimal()
+  
+  print(bic_plot)
+  ggsave("output/bic_plot.png", bic_plot, width = 8, height = 6)
+  
+
+  norm_ll_data <- data.frame(
+    States = rep(results$States, 2),
+    Dataset = c(rep("Train", nrow(results)), rep("Test", nrow(results))),
+    NormalizedLL = c(results$NormalizedTrainLL, results$NormalizedTestLL)
+  )
+  
+  norm_ll_plot <- ggplot(norm_ll_data, aes(x = States, y = NormalizedLL, color = Dataset)) +
+    geom_point() +
+    geom_line() +
+    labs(title = "Normalized Log-Likelihood vs. Number of States",
+         x = "Number of States",
+         y = "Normalized Log-Likelihood") +
+    theme_minimal()
+  
+  print(norm_ll_plot)
+  ggsave("output/normalized_ll_plot.png", norm_ll_plot, width = 8, height = 6)
+}
+
+
+if(nrow(results) > 0) {
+
+  best_model_idx <- which.min(results$BIC)
+  best_states <- results$States[best_model_idx]
+  
+  cat("\nBest model based on BIC: HMM with", best_states, "states\n")
+  cat("BIC:", results$BIC[best_model_idx], "\n")
+  cat("Log-likelihood:", results$LogLikelihood[best_model_idx], "\n")
+  cat("Normalized train log-likelihood:", results$NormalizedTrainLL[best_model_idx], "\n")
+  cat("Normalized test log-likelihood:", results$NormalizedTestLL[best_model_idx], "\n")
+  
+
+  cat(paste("Best model based on BIC: HMM with", best_states, "states"), 
+      file = "output/best_model_info.txt")
+  cat(paste("\nBIC:", results$BIC[best_model_idx]), 
+      file = "output/best_model_info.txt", append = TRUE)
+  cat(paste("\nLog-likelihood:", results$LogLikelihood[best_model_idx]), 
+      file = "output/best_model_info.txt", append = TRUE)
+  cat(paste("\nNormalized train log-likelihood:", results$NormalizedTrainLL[best_model_idx]), 
+      file = "output/best_model_info.txt", append = TRUE)
+  cat(paste("\nNormalized test log-likelihood:", results$NormalizedTestLL[best_model_idx]), 
+      file = "output/best_model_info.txt", append = TRUE)
+  
+
+  cat("\nRetraining best model for anomaly detection...\n")
+  set.seed(123)
+  best_mod <- depmix(train_df[["Global_intensity"]] ~ 1, nstates = best_states, data = train_df)
+  best_fitted <- fit(best_mod, verbose = TRUE)
+  
+
+  best_train_ll <- logLik(best_fitted)
+  best_train_norm_ll <- best_train_ll / nrow(train_df)
+  
+
   n_subsets <- 10
   subset_size <- ceiling(nrow(test_df) / n_subsets)
   
-  # サブセット結果を保存するデータフレーム
+
   subset_results <- data.frame(
     Subset = integer(),
     Size = integer(),
@@ -389,41 +487,40 @@ tryCatch({
     end_idx <- min(i * subset_size, nrow(test_df))
     
     if (start_idx <= nrow(test_df)) {
-      # サブセットを抽出
+
       subset_df <- test_df[start_idx:end_idx, , drop = FALSE]
       
-      # モデル作成とパラメータ設定
-      subset_mod <- depmix(subset_df[[single_variable]] ~ 1, nstates = num_states, data = subset_df)
-      subset_mod <- setpars(subset_mod, getpars(simple_fitted))
-      
-      # 対数尤度計算
+
+      subset_mod <- depmix(subset_df[["Global_intensity"]] ~ 1, nstates = best_states, data = subset_df)
+      subset_mod <- setpars(subset_mod, getpars(best_fitted))
+
       subset_fb <- forwardbackward(subset_mod)
       subset_ll <- subset_fb$logLike
       subset_norm_ll <- subset_ll / nrow(subset_df)
       
-      # 結果を追加
+
       subset_results <- rbind(subset_results, data.frame(
         Subset = i,
         Size = nrow(subset_df),
         LogLikelihood = subset_ll,
         NormalizedLL = subset_norm_ll,
-        Deviation = abs(subset_norm_ll - train_norm_ll)
+        Deviation = abs(subset_norm_ll - best_train_norm_ll)
       ))
     }
   }
   
-  # サブセット結果を表示・保存
+
   cat("Subset log-likelihood results:\n")
   print(subset_results)
   write.csv(subset_results, "output/subset_results.csv", row.names = FALSE)
   
-  # サブセットの正規化対数尤度をプロット
+
   subset_ll_plot <- ggplot(subset_results, aes(x = Subset, y = NormalizedLL)) +
     geom_bar(stat = "identity", fill = "steelblue") +
-    geom_hline(yintercept = train_norm_ll, linetype = "dashed", color = "red") +
-    labs(title = paste("Normalized Log-Likelihood for Test Subsets -", single_variable),
+    geom_hline(yintercept = best_train_norm_ll, linetype = "dashed", color = "red") +
+    labs(title = paste("Normalized Log-Likelihood for Test Subsets - Global_intensity (", best_states, "states)"),
          subtitle = paste("Red line: Training normalized log-likelihood =", 
-                         round(train_norm_ll, 4)),
+                         round(best_train_norm_ll, 4)),
          x = "Subset",
          y = "Normalized Log-Likelihood") +
     theme_minimal()
@@ -431,10 +528,10 @@ tryCatch({
   print(subset_ll_plot)
   ggsave("output/subset_ll_plot.png", subset_ll_plot, width = 10, height = 6)
   
-  # 訓練データからの偏差をプロット
+
   deviation_plot <- ggplot(subset_results, aes(x = Subset, y = Deviation)) +
     geom_bar(stat = "identity", fill = "steelblue") +
-    labs(title = paste("Deviation from Training Log-Likelihood -", single_variable),
+    labs(title = paste("Deviation from Training Log-Likelihood - Global_intensity (", best_states, "states)"),
          x = "Subset",
          y = "Absolute Deviation") +
     theme_minimal()
@@ -442,281 +539,124 @@ tryCatch({
   print(deviation_plot)
   ggsave("output/deviation_plot.png", deviation_plot, width = 10, height = 6)
   
-  # 閾値の決定
+
   threshold <- max(subset_results$Deviation)
   cat("\nThreshold for normal behavior (maximum deviation):", threshold, "\n")
   
-  # 閾値情報を保存
+
   cat(paste("Threshold for normal behavior (maximum deviation):", threshold), 
       file = "output/threshold_info.txt")
-  cat(paste("\nTraining normalized log-likelihood:", train_norm_ll), 
+  cat(paste("\nTraining normalized log-likelihood:", best_train_norm_ll), 
       file = "output/threshold_info.txt", append = TRUE)
   cat("\nSubset deviations:", file = "output/threshold_info.txt", append = TRUE)
   cat(paste("\n", paste(subset_results$Deviation, collapse = ", ")), 
       file = "output/threshold_info.txt", append = TRUE)
-  
-  # 成功情報を出力
-  cat("\nSingle-variable HMM analysis completed successfully!\n")
-  
-  # Step 5: Try multi-response HMM if single variable model worked
-  cat("\nStep 5: Trying multivariate HMM with all selected variables...\n")
-  
-  tryCatch({
-    # マルチレスポンスHMMの作成（修正版）
-    # 各変数ごとにモデルを構築し、BICとログ尤度を計算
-    all_models <- list()
-    all_ll <- numeric(length(colnames(train_df)))
-    all_bic <- numeric(length(colnames(train_df)))
-    all_norm_ll <- numeric(length(colnames(train_df)))
-    
-    cat("Training individual models for each variable...\n")
-    
-    for(i in seq_along(colnames(train_df))) {
-      var <- colnames(train_df)[i]
-      cat("Training model for variable:", var, "\n")
-      
-      # 個別モデルの作成
-      var_mod <- depmix(train_df[[var]] ~ 1, nstates = num_states, data = train_df)
-      var_fitted <- fit(var_mod, verbose = FALSE)
-      
-      # モデルを保存
-      all_models[[var]] <- var_fitted
-      
-      # 評価指標を計算
-      all_ll[i] <- logLik(var_fitted)
-      all_bic[i] <- -2 * all_ll[i] + npar(var_fitted) * log(nrow(train_df))
-      all_norm_ll[i] <- all_ll[i] / nrow(train_df)
-      
-      cat("  Log-likelihood:", all_ll[i], "\n")
-      cat("  BIC:", all_bic[i], "\n")
-      cat("  Normalized LL:", all_norm_ll[i], "\n")
-    }
-    
-    # 結果を比較
-    var_comparison <- data.frame(
-      Variable = colnames(train_df),
-      LogLikelihood = all_ll,
-      BIC = all_bic,
-      NormalizedLL = all_norm_ll
-    )
-    
-    cat("\nModel comparison for all variables:\n")
-    print(var_comparison)
-    write.csv(var_comparison, "output/variable_comparison.csv", row.names = FALSE)
-    
-    # 最良のモデルを見つける（BICが最小）
-    best_var_idx <- which.min(all_bic)
-    best_var <- colnames(train_df)[best_var_idx]
-    best_var_model <- all_models[[best_var]]
-    
-    cat("\nBest variable based on BIC:", best_var, "\n")
-    cat("Best variable BIC:", all_bic[best_var_idx], "\n")
-    cat("Best variable log-likelihood:", all_ll[best_var_idx], "\n")
-    
-    # 最良のモデルについて追加分析
-    if(best_var != single_variable) {
-      cat("\nPerforming additional analysis for best variable:", best_var, "\n")
-      
-      # テストデータでの評価
-      best_test_mod <- depmix(test_df[[best_var]] ~ 1, nstates = num_states, data = test_df)
-      best_test_mod <- setpars(best_test_mod, getpars(best_var_model))
-      best_fb <- forwardbackward(best_test_mod)
-      best_test_ll <- best_fb$logLike
-      best_test_norm_ll <- best_test_ll / nrow(test_df)
-      
-      cat("Test log-likelihood for best variable:", best_test_ll, "\n")
-      cat("Normalized test log-likelihood for best variable:", best_test_norm_ll, "\n")
-      
-      # 結果を保存
-      best_results <- data.frame(
-        Variable = best_var,
-        States = num_states,
-        TrainLL = all_ll[best_var_idx],
-        NormTrainLL = all_norm_ll[best_var_idx],
-        TestLL = best_test_ll,
-        NormTestLL = best_test_norm_ll
-      )
-      write.csv(best_results, "output/best_var_results.csv", row.names = FALSE)
-      
-      # サブセット分析
-      best_subset_results <- data.frame(
-        Subset = integer(),
-        Size = integer(),
-        LogLikelihood = numeric(),
-        NormalizedLL = numeric(),
-        Deviation = numeric()
-      )
-      
-      for(i in 1:n_subsets) {
-        start_idx <- (i-1) * subset_size + 1
-        end_idx <- min(i * subset_size, nrow(test_df))
-        
-        if (start_idx <= nrow(test_df)) {
-          # サブセットを抽出
-          subset_df <- test_df[start_idx:end_idx, , drop = FALSE]
-          
-          # モデル作成とパラメータ設定
-          subset_mod <- depmix(subset_df[[best_var]] ~ 1, nstates = num_states, data = subset_df)
-          subset_mod <- setpars(subset_mod, getpars(best_var_model))
-          
-          # 対数尤度計算
-          subset_fb <- forwardbackward(subset_mod)
-          subset_ll <- subset_fb$logLike
-          subset_norm_ll <- subset_ll / nrow(subset_df)
-          
-          # 結果を追加
-          best_subset_results <- rbind(best_subset_results, data.frame(
-            Subset = i,
-            Size = nrow(subset_df),
-            LogLikelihood = subset_ll,
-            NormalizedLL = subset_norm_ll,
-            Deviation = abs(subset_norm_ll - all_norm_ll[best_var_idx])
-          ))
-        }
-      }
-      
-      # 結果を保存
-      write.csv(best_subset_results, "output/best_var_subset_results.csv", row.names = FALSE)
-      
-      # 最良変数の閾値
-      best_threshold <- max(best_subset_results$Deviation)
-      cat("\nThreshold for best variable (maximum deviation):", best_threshold, "\n")
-      
-      # 閾値情報を保存
-      cat(paste("\n\nBest variable analysis:", best_var), 
-          file = "output/threshold_info.txt", append = TRUE)
-      cat(paste("\nThreshold for best variable (maximum deviation):", best_threshold), 
-          file = "output/threshold_info.txt", append = TRUE)
-    } else {
-      cat("\nBest variable is the same as the one used in main analysis. No additional analysis needed.\n")
-    }
-    
-    cat("Multivariate analysis completed.\n")
-  }, error = function(e) {
-    cat("Error in multivariate analysis:", e$message, "\n")
-    cat("Continuing with single-variable results which are still valid.\n")
-  })
-  
-}, error = function(e) {
-  cat("Error in single-variable HMM:", e$message, "\n")
-  
-  # エラーが発生した場合、別のアプローチを試す
-  cat("\nTrying a different approach with direct observation modeling...\n")
-  
-  # 変数を数値ベクトルとして抽出
-  var_values <- train_df[[single_variable]]
-  
-  # 値の範囲を確認
-  var_min <- min(var_values, na.rm = TRUE)
-  var_max <- max(var_values, na.rm = TRUE)
-  cat("Variable range:", var_min, "to", var_max, "\n")
-  
-  # データの値に基づいて非常に基本的なHMMシミュレーション
-  # 実際のHMMではなく、基本的な類似結果を生成
-  set.seed(123)
-  
-  # 擬似対数尤度計算
-  dummy_train_ll <- sum(dnorm(var_values, mean = mean(var_values), sd = sd(var_values), log = TRUE))
-  dummy_train_norm_ll <- dummy_train_ll / length(var_values)
-  
-  test_values <- test_df[[single_variable]]
-  dummy_test_ll <- sum(dnorm(test_values, mean = mean(var_values), sd = sd(var_values), log = TRUE))
-  dummy_test_norm_ll <- dummy_test_ll / length(test_values)
-  
-  cat("Simulated train log-likelihood:", dummy_train_ll, "\n")
-  cat("Simulated normalized train log-likelihood:", dummy_train_norm_ll, "\n")
-  cat("Simulated test log-likelihood:", dummy_test_ll, "\n")
-  cat("Simulated normalized test log-likelihood:", dummy_test_norm_ll, "\n")
-  
-  # 結果を保存
-  model_results <- data.frame(
-    Variable = single_variable,
-    States = num_states,
-    TrainLL = dummy_train_ll,
-    NormTrainLL = dummy_train_norm_ll,
-    TestLL = dummy_test_ll,
-    NormTestLL = dummy_test_norm_ll,
-    Note = "Simulated values due to HMM error"
-  )
-  write.csv(model_results, "output/model_results.csv", row.names = FALSE)
-  
-  # 擬似サブセット分析
-  n_subsets <- 10
-  subset_size <- ceiling(length(test_values) / n_subsets)
-  
-  # サブセット結果を保存するデータフレーム
-  subset_results <- data.frame(
-    Subset = integer(),
-    Size = integer(),
-    LogLikelihood = numeric(),
-    NormalizedLL = numeric(),
-    Deviation = numeric()
-  )
-  
-  for(i in 1:n_subsets) {
-    start_idx <- (i-1) * subset_size + 1
-    end_idx <- min(i * subset_size, length(test_values))
-    
-    if (start_idx <= length(test_values)) {
-      # サブセットを抽出
-      subset_values <- test_values[start_idx:end_idx]
-      
-      # 擬似対数尤度計算
-      subset_ll <- sum(dnorm(subset_values, mean = mean(var_values), sd = sd(var_values), log = TRUE))
-      subset_norm_ll <- subset_ll / length(subset_values)
-      
-      # 結果を追加
-      subset_results <- rbind(subset_results, data.frame(
-        Subset = i,
-        Size = length(subset_values),
-        LogLikelihood = subset_ll,
-        NormalizedLL = subset_norm_ll,
-        Deviation = abs(subset_norm_ll - dummy_train_norm_ll)
-      ))
-    }
-  }
-  
-  # サブセット結果を表示・保存
-  cat("Simulated subset log-likelihood results:\n")
-  print(subset_results)
-  write.csv(subset_results, "output/subset_results.csv", row.names = FALSE)
-  
-  # サブセットの正規化対数尤度をプロット
-  subset_ll_plot <- ggplot(subset_results, aes(x = Subset, y = NormalizedLL)) +
-    geom_bar(stat = "identity", fill = "steelblue") +
-    geom_hline(yintercept = dummy_train_norm_ll, linetype = "dashed", color = "red") +
-    labs(title = paste("Simulated Normalized Log-Likelihood for Test Subsets -", single_variable),
-         subtitle = "NOTE: Simulated values due to HMM error",
-         x = "Subset",
-         y = "Normalized Log-Likelihood") +
-    theme_minimal()
-  
-  print(subset_ll_plot)
-  ggsave("output/subset_ll_plot.png", subset_ll_plot, width = 10, height = 6)
-  
-  # 訓練データからの偏差をプロット
-  deviation_plot <- ggplot(subset_results, aes(x = Subset, y = Deviation)) +
-    geom_bar(stat = "identity", fill = "steelblue") +
-    labs(title = paste("Simulated Deviation from Training Log-Likelihood -", single_variable),
-         subtitle = "NOTE: Simulated values due to HMM error",
-         x = "Subset",
-         y = "Absolute Deviation") +
-    theme_minimal()
-  
-  print(deviation_plot)
-  ggsave("output/deviation_plot.png", deviation_plot, width = 10, height = 6)
-  
-  # 閾値の決定
-  threshold <- max(subset_results$Deviation)
-  cat("\nSimulated threshold for normal behavior (maximum deviation):", threshold, "\n")
-  
-  # 閾値情報を保存
-  cat(paste("Simulated threshold for normal behavior (maximum deviation):", threshold), 
-      file = "output/threshold_info.txt")
-  cat("\nNOTE: These are simulated values due to HMM error.", 
-      file = "output/threshold_info.txt", append = TRUE)
-})
+} else {
+  cat("\nNo successful models were trained. Please check your data and parameters.\n")
+}
 
-# 最後にエラーの種類に関わらず、常に以下のメッセージを表示
+
+cat("\nStep 5: Brief comparison of HMM performance on other variables...\n")
+
+
+all_vars <- colnames(train_df)
+var_results <- data.frame(
+  Variable = character(),
+  States = integer(),
+  LogLikelihood = numeric(),
+  NormalizedTrainLL = numeric(),
+  BIC = numeric(),
+  TestLL = numeric(),
+  NormalizedTestLL = numeric(),
+  Notes = character()
+)
+
+for(var in all_vars) {
+  cat("Training model for variable:", var, "\n")
+  
+
+  tryCatch({
+
+    set.seed(123)
+    var_mod <- depmix(train_df[[var]] ~ 1, nstates = 4, data = train_df)
+    var_fitted <- fit(var_mod, verbose = FALSE, emcontrol = em.control(maxit = 200))
+    
+
+    train_ll <- logLik(var_fitted)
+    train_norm_ll <- train_ll / nrow(train_df)
+    bic <- -2 * train_ll + npar(var_fitted) * log(nrow(train_df))
+    
+
+    test_mod <- depmix(test_df[[var]] ~ 1, nstates = 4, data = test_df)
+    test_mod <- setpars(test_mod, getpars(var_fitted))
+    fb <- forwardbackward(test_mod)
+    test_ll <- fb$logLike
+    test_norm_ll <- test_ll / nrow(test_df)
+    
+
+    notes <- ""
+    if(train_ll > 0) {
+      notes <- "WARNING: Positive log-likelihood indicates model issues"
+    }
+    
+
+    cat("  Train log-likelihood:", train_ll, "\n")
+    cat("  Normalized train log-likelihood:", train_norm_ll, "\n")
+    cat("  BIC:", bic, "\n")
+    cat("  Test log-likelihood:", test_ll, "\n")
+    cat("  Normalized test log-likelihood:", test_norm_ll, "\n")
+    if(notes != "") {
+      cat("  ", notes, "\n")
+    }
+    
+
+    var_results <- rbind(var_results, data.frame(
+      Variable = var,
+      States = 4,
+      LogLikelihood = train_ll,
+      NormalizedTrainLL = train_norm_ll,
+      BIC = bic,
+      TestLL = test_ll,
+      NormalizedTestLL = test_norm_ll,
+      Notes = notes
+    ))
+  }, error = function(e) {
+    cat("Error in training model for", var, ":", e$message, "\n")
+    
+    var_results <- rbind(var_results, data.frame(
+      Variable = var,
+      States = 4,
+      LogLikelihood = NA,
+      NormalizedTrainLL = NA,
+      BIC = NA,
+      TestLL = NA,
+      NormalizedTestLL = NA,
+      Notes = paste("ERROR:", e$message)
+    ))
+  })
+}
+
+
+valid_results <- var_results[var_results$LogLikelihood < 0 & !is.na(var_results$LogLikelihood), ]
+
+
+cat("\nComparison of HMM performance on different variables (valid models only):\n")
+if(nrow(valid_results) > 0) {
+  print(valid_results[, c("Variable", "States", "LogLikelihood", "BIC", "NormalizedTestLL")])
+  write.csv(valid_results, "output/variable_comparison.csv", row.names = FALSE)
+  
+
+  if(nrow(valid_results) < nrow(var_results)) {
+    cat("\nWARNING: Some variables showed unusual behavior and were excluded from comparison.\n")
+    cat("Full results including problematic variables:\n")
+    print(var_results[, c("Variable", "States", "LogLikelihood", "BIC", "Notes")])
+    write.csv(var_results, "output/all_variables_comparison.csv", row.names = FALSE)
+  }
+} else {
+  cat("No valid models found. All variables showed unusual behavior.\n")
+  print(var_results[, c("Variable", "States", "LogLikelihood", "Notes")])
+  write.csv(var_results, "output/all_variables_comparison.csv", row.names = FALSE)
+}
+
 cat("\nTerm Project Part II analysis completed.\n")
 cat("Check the 'output' directory for all generated results and figures.\n")

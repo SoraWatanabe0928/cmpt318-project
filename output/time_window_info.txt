@@ -1,5 +1,0 @@
-Selected time window: Monday from 18:00:00 to 22:00:00
-Training years: 2006, 2007, 2008
-Testing year: 2009
-Training data dimensions: 32100 x 13
-Testing data dimensions: 14400 x 13
