@@ -1,6 +1,4 @@
-# CMPT 318 Term Project - Part II
-# Anomaly Detection in Electric Energy Consumption Data
-# Configurable parameters - Modify here for Part 3 and 4 if needed
+# CMPT 318 Term Project - Part 2
 
 # Time window settings
 SELECTED_WEEKDAY <- "Monday"
