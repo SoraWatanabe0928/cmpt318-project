@@ -1,1 +1,0 @@
-Selected variables for HMM based on PCA: Global_intensity, Global_active_power, Sub_metering_3

@@ -1,26 +1,26 @@
 # CMPT 318 Term Project - Part II
 # Anomaly Detection in Electric Energy Consumption Data
-# 設定可能なパラメータ - Part 3、4で変更する場合はここを修正
+# Configurable parameters - Modify here for Part 3 and 4 if needed
 
-# 時間枠の設定
+# Time window settings
 SELECTED_WEEKDAY <- "Monday"
 START_TIME <- "18:00:00"
 END_TIME <- "22:00:00"
 
-# HMMの状態数の設定
-STATE_RANGE <- c(4, 6, 8, 10, 12) # 試す状態数の範囲
-DEFAULT_STATES <- 6 # 統計的に妥当な状態数（負の対数尤度を持つモデルから）
+# HMM state settings
+STATE_RANGE <- c(4, 6, 8, 10, 12) # Range of states to test
+DEFAULT_STATES <- 6 # Statistically valid state count (from models with negative log-likelihood)
 
-# フォルダ構造の設定
+# Folder structure settings
 OUTPUT_DIR <- "output"
-PART1_DIR <- file.path(OUTPUT_DIR, "part1") # Part 1の出力
-PART2_DIR <- file.path(OUTPUT_DIR, "part2") # Part 2の出力
-MODELS_DIR <- file.path(OUTPUT_DIR, "models") # モデルの保存場所
+PART1_DIR <- file.path(OUTPUT_DIR, "part1") # Output from Part 1
+PART2_DIR <- file.path(OUTPUT_DIR, "part2") # Output from Part 2
+MODELS_DIR <- file.path(OUTPUT_DIR, "models") # Location for saved models
 
-# 作業ディレクトリの確認 - コンソールに表示
+# Check current working directory - Display in console
 cat("Current working directory:", getwd(), "\n")
 
-# 必要なディレクトリの作成
+# Create necessary directories
 create_directories <- function() {
   dirs <- c(
     "data/processed",
@@ -40,7 +40,7 @@ create_directories <- function() {
 
 create_directories()
 
-# 必要なパッケージのロード
+# Load required packages
 load_packages <- function() {
   packages <- c("depmixS4", "dplyr", "lubridate", "ggplot2", "stats", "reshape2")
   for (pkg in packages) {
@@ -50,7 +50,7 @@ load_packages <- function() {
     library(pkg, character.only = TRUE)
   }
   
-  # ggbiplotのインストールとロード
+  # Install and load ggbiplot
   if (!requireNamespace("ggbiplot", quietly = TRUE)) {
     if (!requireNamespace("devtools", quietly = TRUE)) {
       install.packages("devtools")
@@ -62,11 +62,11 @@ load_packages <- function() {
 
 load_packages()
 
-# データの前処理 - Part 1の機能を再利用
+# Data preprocessing - Reuse Part 1 functionality
 preprocess_data <- function() {
   standardized_data_path <- "data/processed/TermProjectData_Standardized.csv"
   
-  # 既に標準化されたデータが存在するか確認
+  # Check if standardized data already exists
   if (file.exists(standardized_data_path)) {
     cat("Using existing standardized data...\n")
     sdf <- read.csv(standardized_data_path, stringsAsFactors = FALSE)
@@ -75,10 +75,10 @@ preprocess_data <- function() {
     stop("Missing standardized data")
   }
   
-  # 日付時刻の変換
+  # Convert date and time
   sdf$DateTime <- as.POSIXct(paste(sdf$Date, sdf$Time), format="%d/%m/%Y %H:%M:%S")
   if (all(is.na(sdf$DateTime))) {
-    # 別の形式を試す
+    # Try alternate format
     sdf$DateTime <- as.POSIXct(paste(sdf$Date, sdf$Time), format="%Y-%m-%d %H:%M:%S")
   }
   sdf$Weekday <- weekdays(sdf$DateTime)
@@ -86,18 +86,18 @@ preprocess_data <- function() {
   return(sdf)
 }
 
-# Step 1: データのロード
+# Step 1: Load the data
 cat("\nStep 1: Loading standardized data...\n")
 sdf <- preprocess_data()
 
-# Step 2: PCA分析による変数選択
+# Step 2: Variable selection using PCA
 perform_pca <- function(sdf) {
   cat("Step 2: Performing PCA analysis...\n")
   variables <- c("Global_active_power", "Global_reactive_power", "Voltage", 
                 "Global_intensity", "Sub_metering_1", "Sub_metering_2", "Sub_metering_3")
   features <- sdf[, variables]
   
-  # NA値の確認と補完
+  # Check for and handle NA values
   na_count <- colSums(is.na(features))
   if(sum(na_count) > 0) {
     cat("Found NA values in the data. Imputing with column means...\n")
@@ -108,19 +108,19 @@ perform_pca <- function(sdf) {
     }
   }
   
-  # PCA実行
+  # Run PCA
   pca_result <- prcomp(features, center = TRUE, scale. = TRUE)
   summary_pca <- summary(pca_result)
   
-  # PCA要約の表示と保存
+  # Display and save PCA summary
   cat("PCA Summary:\n")
   print(summary_pca)
   capture.output(print(summary_pca), file = file.path(PART2_DIR, "pca_summary.txt"))
   
-  # PCAプロットの作成
+  # Create PCA plots
   create_pca_plots(pca_result, features)
   
-  # 変数選択
+  # Select variables
   loadings_pc1 <- abs(pca_result$rotation[, "PC1"])
   selected_variables <- names(loadings_pc1)[order(loadings_pc1, decreasing = TRUE)[1:3]]
   
@@ -128,7 +128,7 @@ perform_pca <- function(sdf) {
   cat(paste("Selected variables for HMM based on PCA:", paste(selected_variables, collapse=", ")), 
       file = file.path(PART2_DIR, "selected_variables.txt"))
   
-  # PCA結果を保存（再利用のため）
+  # Save PCA results (for reuse)
   saveRDS(pca_result, file = file.path(MODELS_DIR, "pca_model.rds"))
   
   return(list(
@@ -137,8 +137,17 @@ perform_pca <- function(sdf) {
   ))
 }
 
-# PCAプロットの作成
+# Create PCA plots
 create_pca_plots <- function(pca_result, features) {
+  # Set white background for all plots
+  white_theme <- theme_minimal() +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.grid.major = element_line(color = "#EEEEEE"),
+      panel.grid.minor = element_line(color = "#EEEEEE")
+    )
+  
   # Scree plot
   var_explained <- summary(pca_result)$importance[2,] * 100
   cum_var_explained <- summary(pca_result)$importance[3,] * 100
@@ -157,18 +166,19 @@ create_pca_plots <- function(pca_result, features) {
          x = "Principal Component", 
          y = "Percent of Variance Explained") +
     scale_y_continuous(sec.axis = sec_axis(~., name = "Cumulative Percent")) +
-    theme_minimal()
+    white_theme
   
   print(scree_plot)
-  ggsave(file.path(PART2_DIR, "pca_scree_plot.png"), scree_plot, width = 10, height = 6)
+  ggsave(file.path(PART2_DIR, "pca_scree_plot.png"), scree_plot, width = 10, height = 6, bg = "white")
   
-  # Biplot
+  # Biplot without labels
   tryCatch({
-    biplot <- ggbiplot(pca_result, labels = rownames(features), groups = NULL) +
-      labs(title = "PCA Biplot of Electricity Consumption Variables")
+    biplot <- ggbiplot(pca_result, labels = FALSE, groups = NULL) +
+      labs(title = "PCA Biplot of Electricity Consumption Variables") +
+      white_theme
     
     print(biplot)
-    ggsave(file.path(PART2_DIR, "pca_biplot.png"), biplot, width = 10, height = 8)
+    ggsave(file.path(PART2_DIR, "pca_biplot.png"), biplot, width = 10, height = 8, bg = "white")
   }, error = function(e) {
     cat("Error generating biplot:", e$message, "\n")
     cat("Skipping biplot generation...\n")
@@ -181,7 +191,7 @@ create_pca_plots <- function(pca_result, features) {
                                  variable.name = "Component", 
                                  value.name = "Loading")
   
-  # 最初の3つのコンポーネントに焦点
+  # Focus on first 3 components
   loadings_long_subset <- loadings_long[loadings_long$Component %in% c("PC1", "PC2", "PC3"), ]
   
   loading_plot <- ggplot(loadings_long_subset, aes(x = Variable, y = Loading, fill = Component)) +
@@ -189,22 +199,22 @@ create_pca_plots <- function(pca_result, features) {
     labs(title = "PCA Loading Plot", 
          x = "Variable", 
          y = "Loading") +
-    theme_minimal() +
+    white_theme +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
   
   print(loading_plot)
-  ggsave(file.path(PART2_DIR, "pca_loading_plot.png"), loading_plot, width = 10, height = 6)
+  ggsave(file.path(PART2_DIR, "pca_loading_plot.png"), loading_plot, width = 10, height = 6, bg = "white")
 }
 
-# PCA分析の実行
+# Run PCA analysis
 pca_results <- perform_pca(sdf)
 selected_variables <- pca_results$selected_variables
 
-# Step 3: データの時間枠選択と分割
+# Step 3: Select time window and partition data
 select_and_partition_data <- function(sdf, selected_weekday, start_time, end_time) {
   cat("Step 3: Selecting time window and partitioning data...\n")
   
-  # 時間枠内かどうかを確認する関数
+  # Function to check if a time falls within the selected window
   is_within_timewindow <- function(time_str, start_time, end_time) {
     hour <- as.numeric(substr(time_str, 1, 2))
     start_hour <- as.numeric(substr(start_time, 1, 2))
@@ -213,19 +223,19 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
     return(hour >= start_hour && hour <= end_hour)
   }
   
-  # 選択した曜日と時間枠でデータをフィルタリング
+  # Filter data for the selected weekday and time window
   selected_data <- sdf[sdf$Weekday == selected_weekday & 
                        sapply(sdf$Time, is_within_timewindow, start_time, end_time), ]
   
-  # 年を抽出して分割に使用
+  # Extract year for partitioning
   selected_data$Year <- year(selected_data$DateTime)
   
-  # 年別のデータポイント数を確認
+  # Check data points per year
   year_count <- table(selected_data$Year)
   cat("Data points by year:\n")
   print(year_count)
   
-  # トレーニングデータ（最初の3年）とテストデータ（4年目）に分割
+  # Partition data into training (first 3 years) and testing (4th year)
   all_years <- sort(unique(selected_data$Year))
   if(length(all_years) >= 4) {
     training_years <- all_years[1:3]
@@ -234,11 +244,11 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
     train_data <- selected_data[selected_data$Year %in% training_years, ]
     test_data <- selected_data[selected_data$Year == testing_year, ]
     
-    # データセットの次元を表示
+    # Display dataset dimensions
     cat("Training data dimensions:", dim(train_data), "\n")
     cat("Testing data dimensions:", dim(test_data), "\n")
     
-    # 選択した変数を抽出
+    # Extract selected variables
     train_df <- data.frame(
       Global_intensity = train_data$Global_intensity,
       Global_active_power = train_data$Global_active_power,
@@ -251,19 +261,19 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
       Sub_metering_3 = test_data$Sub_metering_3
     )
     
-    # 特徴量の次元を表示
+    # Display feature dimensions
     cat("Training features dimensions:", dim(train_df), "\n")
     cat("Test features dimensions:", dim(test_df), "\n")
     cat("Selected variables:", paste(colnames(train_df), collapse=", "), "\n")
     
-    # NA値の確認と処理
+    # Check for and handle NA values
     na_in_train <- any(is.na(train_df))
     na_in_test <- any(is.na(test_df))
     
     if(na_in_train || na_in_test) {
       cat("Warning: Found NA values in feature data. Imputing with means...\n")
       
-      # トレーニングデータのNA値を補完
+      # Impute NA values in training data
       if(na_in_train) {
         for(col in names(train_df)) {
           col_na <- is.na(train_df[[col]])
@@ -275,7 +285,7 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
         }
       }
       
-      # テストデータのNA値を補完
+      # Impute NA values in test data
       if(na_in_test) {
         for(col in names(test_df)) {
           col_na <- is.na(test_df[[col]])
@@ -288,7 +298,7 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
       }
     }
     
-    # 時間枠と分割情報を保存
+    # Save time window and partitioning information
     time_window_info <- paste(
       paste("Selected time window:", selected_weekday, "from", start_time, "to", end_time),
       paste("\nTraining years:", paste(training_years, collapse=", ")),
@@ -299,7 +309,7 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
     )
     cat(time_window_info, file = file.path(PART2_DIR, "time_window_info.txt"))
     
-    # データ分割を保存（再利用のため）
+    # Save data partition (for reuse)
     saveRDS(list(train_df = train_df, test_df = test_df), 
             file = file.path(MODELS_DIR, "data_partition.rds"))
     
@@ -314,16 +324,25 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
   }
 }
 
-# データ分割の実行
+# Execute data partitioning
 partitioned_data <- select_and_partition_data(sdf, SELECTED_WEEKDAY, START_TIME, END_TIME)
 train_df <- partitioned_data$train_df
 test_df <- partitioned_data$test_df
 
-# Step 4: 複数の状態数でHMMをトレーニングして最適なモデルを選択
+# Step 4: Train multiple HMM models and select the best one
 train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
   cat("\nStep 4: Training multiple HMM models with different numbers of states...\n")
   
-  # 結果を保存するデータフレーム
+  # Create white background theme for plots
+  white_theme <- theme_minimal() +
+    theme(
+      panel.background = element_rect(fill = "white", color = NA),
+      plot.background = element_rect(fill = "white", color = NA),
+      panel.grid.major = element_line(color = "#EEEEEE"),
+      panel.grid.minor = element_line(color = "#EEEEEE")
+    )
+  
+  # Dataframe to store results
   results_df <- data.frame(
     States = integer(),
     LogLikelihood = numeric(),
@@ -334,38 +353,38 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
     IsValidModel = logical()
   )
   
-  # モデルを保存するリスト
+  # List to store models
   hmm_models <- list()
   
-  # 異なる状態数でモデルをトレーニング
+  # Train models with different state counts
   for(num_states in state_range) {
     cat("\nTraining HMM with", num_states, "states for variable:", variable, "\n")
     
     tryCatch({
-      # モデル作成
+      # Create model
       set.seed(123)
       hmm_mod <- depmix(train_df[[variable]] ~ 1, nstates = num_states, data = train_df)
       
-      # モデルフィット
+      # Fit model
       cat("Fitting model...\n")
       hmm_fitted <- fit(hmm_mod, verbose = TRUE)
       
-      # 評価指標を計算
+      # Calculate evaluation metrics
       train_ll <- logLik(hmm_fitted)
       train_norm_ll <- train_ll / nrow(train_df)
       bic <- -2 * train_ll + npar(hmm_fitted) * log(nrow(train_df))
       
-      # テストデータでの評価
+      # Evaluate on test data
       test_mod <- depmix(test_df[[variable]] ~ 1, nstates = num_states, data = test_df)
       test_mod <- setpars(test_mod, getpars(hmm_fitted))
       fb <- forwardbackward(test_mod)
       test_ll <- fb$logLike
       test_norm_ll <- test_ll / nrow(test_df)
       
-      # 対数尤度が負かどうかを確認（モデルの妥当性）
+      # Check if log-likelihood is negative (model validity)
       is_valid <- train_ll < 0
       
-      # 結果を表示
+      # Display results
       cat("  Train log-likelihood:", train_ll, "\n")
       cat("  Normalized train log-likelihood:", train_norm_ll, "\n")
       cat("  BIC:", bic, "\n")
@@ -375,7 +394,7 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
         cat("  WARNING: Positive log-likelihood indicates model issues\n")
       }
       
-      # 結果をデータフレームに追加
+      # Add results to dataframe
       results_df <- rbind(results_df, data.frame(
         States = num_states,
         LogLikelihood = train_ll,
@@ -386,7 +405,7 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
         IsValidModel = is_valid
       ))
       
-      # モデルを保存
+      # Save model
       hmm_models[[as.character(num_states)]] <- hmm_fitted
       
     }, error = function(e) {
@@ -394,15 +413,15 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
     })
   }
   
-  # 結果をファイルに保存
+  # Save results to file
   write.csv(results_df, file.path(PART2_DIR, "hmm_model_comparison.csv"), row.names = FALSE)
   
-  # 全モデルを保存
+  # Save all models
   saveRDS(hmm_models, file.path(MODELS_DIR, "all_hmm_models.rds"))
   
-  # 結果の視覚化 - 対数尤度
+  # Visualize results
   if(nrow(results_df) > 1) {
-    # 対数尤度プロット
+    # Log-likelihood plot
     ll_plot <- ggplot(results_df, aes(x = States, y = LogLikelihood, color = IsValidModel)) +
       geom_point() +
       geom_line() +
@@ -413,12 +432,12 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
            x = "Number of States",
            y = "Log-Likelihood",
            color = "Model Validity") +
-      theme_minimal()
+      white_theme
     
     print(ll_plot)
-    ggsave(file.path(PART2_DIR, "log_likelihood_plot.png"), ll_plot, width = 8, height = 6)
+    ggsave(file.path(PART2_DIR, "log_likelihood_plot.png"), ll_plot, width = 8, height = 6, bg = "white")
     
-    # BICプロット
+    # BIC plot (valid models only)
     valid_results <- results_df[results_df$IsValidModel, ]
     if(nrow(valid_results) > 0) {
       bic_plot <- ggplot(valid_results, aes(x = States, y = BIC)) +
@@ -427,13 +446,13 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
         labs(title = "BIC vs. Number of States (Valid Models Only)",
              x = "Number of States",
              y = "BIC") +
-        theme_minimal()
+        white_theme
       
       print(bic_plot)
-      ggsave(file.path(PART2_DIR, "bic_plot.png"), bic_plot, width = 8, height = 6)
+      ggsave(file.path(PART2_DIR, "bic_plot.png"), bic_plot, width = 8, height = 6, bg = "white")
     }
     
-    # 正規化対数尤度の比較
+    # Normalized log-likelihood comparison
     norm_ll_data <- data.frame(
       States = rep(results_df$States, 2),
       Dataset = c(rep("Train", nrow(results_df)), rep("Test", nrow(results_df))),
@@ -454,10 +473,10 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
            y = "Normalized Log-Likelihood",
            shape = "Model Validity",
            linetype = "Model Validity") +
-      theme_minimal()
+      white_theme
     
     print(norm_ll_plot)
-    ggsave(file.path(PART2_DIR, "normalized_ll_plot.png"), norm_ll_plot, width = 10, height = 6)
+    ggsave(file.path(PART2_DIR, "normalized_ll_plot.png"), norm_ll_plot, width = 10, height = 6, bg = "white")
   }
   
   return(list(
@@ -466,18 +485,18 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
   ))
 }
 
-# 主要変数（Global_intensity）に対してHMMをトレーニング
+# Train HMM models for the main variable (Global_intensity)
 hmm_results <- train_multiple_hmms(train_df, test_df, "Global_intensity", STATE_RANGE)
 results_df <- hmm_results$results
 hmm_models <- hmm_results$models
 
-# 最適なモデルの選択と保存
+# Select and save the best model
 select_best_model <- function(results_df, hmm_models, default_states) {
-  # 妥当なモデル（負の対数尤度を持つ）のみをフィルタリング
+  # Filter valid models (with negative log-likelihood)
   valid_results <- results_df[results_df$IsValidModel, ]
   
   if(nrow(valid_results) > 0) {
-    # BICが最小のモデルを選択
+    # Select model with minimum BIC
     best_model_idx <- which.min(valid_results$BIC)
     best_states <- valid_results$States[best_model_idx]
     
@@ -487,19 +506,19 @@ select_best_model <- function(results_df, hmm_models, default_states) {
     cat("Normalized train log-likelihood:", valid_results$NormalizedTrainLL[best_model_idx], "\n")
     cat("Normalized test log-likelihood:", valid_results$NormalizedTestLL[best_model_idx], "\n")
     
-    # 最適モデルを取得
+    # Get best model
     best_model <- hmm_models[[as.character(best_states)]]
   } else {
-    # 妥当なモデルがない場合はデフォルトモデルを使用
+    # Use default model if no valid models are found
     cat("\nWARNING: No valid models found (all have positive log-likelihood).\n")
     cat("Using default model with", default_states, "states.\n")
     
-    # デフォルトモデルがあるか確認
+    # Check if default model exists
     if(as.character(default_states) %in% names(hmm_models)) {
       best_states <- default_states
       best_model <- hmm_models[[as.character(default_states)]]
       
-      # 該当する行を検索
+      # Find matching row
       model_idx <- which(results_df$States == default_states)
       if(length(model_idx) > 0) {
         cat("BIC:", results_df$BIC[model_idx], "\n")
@@ -508,15 +527,15 @@ select_best_model <- function(results_df, hmm_models, default_states) {
         cat("Normalized test log-likelihood:", results_df$NormalizedTestLL[model_idx], "\n")
       }
     } else {
-      # デフォルトモデルもない場合は、最初のモデルを使用
+      # Use first model if default model is not available
       best_states <- as.numeric(names(hmm_models)[1])
       best_model <- hmm_models[[1]]
       cat("Default model not found. Using first available model with", best_states, "states.\n")
     }
   }
   
-  # 最適モデルの情報を保存
-  # エラー修正: logLik関数を使用して対数尤度を取得する
+  # Save best model information
+  # Fix: Use logLik function to get log-likelihood
   model_log_likelihood <- logLik(best_model)
   is_valid_model <- model_log_likelihood < 0
   normalized_ll <- model_log_likelihood / nrow(train_df)
@@ -530,7 +549,7 @@ select_best_model <- function(results_df, hmm_models, default_states) {
   )
   cat(model_info, file = file.path(PART2_DIR, "best_model_info.txt"))
   
-  # 最適モデルを保存
+  # Save best model
   saveRDS(best_model, file.path(MODELS_DIR, "best_hmm_model.rds"))
   saveRDS(best_states, file.path(MODELS_DIR, "best_states.rds"))
   
@@ -542,24 +561,33 @@ select_best_model <- function(results_df, hmm_models, default_states) {
   ))
 }
 
-# 最適モデルの選択
+# Select best model
 best_model_info <- select_best_model(results_df, hmm_models, DEFAULT_STATES)
 best_model <- best_model_info$model
 best_states <- best_model_info$states
 best_model_ll <- best_model_info$log_likelihood
 best_model_norm_ll <- best_model_info$normalized_ll
 
-# エラーハンドリングを追加 - ここでエラーが発生しても続行する
+# Add error handling - continue even if errors occur
 tryCatch({
-  # 異常検知のための閾値設定
+  # Calculate threshold for anomaly detection
   calculate_threshold <- function(best_model, train_df, test_df, variable, train_norm_ll) {
     cat("\nCalculating threshold for anomaly detection...\n")
     
-    # テストデータを10個のサブセットに分割
+    # Create white background theme for plots
+    white_theme <- theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "#EEEEEE"),
+        panel.grid.minor = element_line(color = "#EEEEEE")
+      )
+    
+    # Divide test data into 10 subsets
     n_subsets <- 10
     subset_size <- ceiling(nrow(test_df) / n_subsets)
     
-    # サブセット結果を保存するデータフレーム
+    # Dataframe to store subset results
     subset_results <- data.frame(
       Subset = integer(),
       Size = integer(),
@@ -573,19 +601,19 @@ tryCatch({
       end_idx <- min(i * subset_size, nrow(test_df))
       
       if (start_idx <= nrow(test_df)) {
-        # サブセットを抽出
+        # Extract subset
         subset_df <- test_df[start_idx:end_idx, , drop = FALSE]
         
-        # モデル作成とパラメータ設定
+        # Create and set model parameters
         subset_mod <- depmix(subset_df[[variable]] ~ 1, nstates = best_model@nstates, data = subset_df)
         subset_mod <- setpars(subset_mod, getpars(best_model))
         
-        # 対数尤度計算
+        # Calculate log-likelihood
         subset_fb <- forwardbackward(subset_mod)
         subset_ll <- subset_fb$logLike
         subset_norm_ll <- subset_ll / nrow(subset_df)
         
-        # 結果を追加
+        # Add results
         subset_results <- rbind(subset_results, data.frame(
           Subset = i,
           Size = nrow(subset_df),
@@ -596,12 +624,12 @@ tryCatch({
       }
     }
     
-    # サブセット結果を表示・保存
+    # Display and save subset results
     cat("Subset log-likelihood results:\n")
     print(subset_results)
     write.csv(subset_results, file.path(PART2_DIR, "subset_results.csv"), row.names = FALSE)
     
-    # サブセットの正規化対数尤度をプロット
+    # Plot normalized log-likelihood for subsets
     subset_ll_plot <- ggplot(subset_results, aes(x = Subset, y = NormalizedLL)) +
       geom_bar(stat = "identity", fill = "steelblue") +
       geom_hline(yintercept = train_norm_ll, linetype = "dashed", color = "red") +
@@ -610,27 +638,27 @@ tryCatch({
                           round(train_norm_ll, 4)),
            x = "Subset",
            y = "Normalized Log-Likelihood") +
-      theme_minimal()
+      white_theme
     
     print(subset_ll_plot)
-    ggsave(file.path(PART2_DIR, "subset_ll_plot.png"), subset_ll_plot, width = 10, height = 6)
+    ggsave(file.path(PART2_DIR, "subset_ll_plot.png"), subset_ll_plot, width = 10, height = 6, bg = "white")
     
-    # 訓練データからの偏差をプロット
+    # Plot deviation from training log-likelihood
     deviation_plot <- ggplot(subset_results, aes(x = Subset, y = Deviation)) +
       geom_bar(stat = "identity", fill = "steelblue") +
       labs(title = paste("Deviation from Training Log-Likelihood - Global_intensity (", best_states, "states)"),
            x = "Subset",
            y = "Absolute Deviation") +
-      theme_minimal()
+      white_theme
     
     print(deviation_plot)
-    ggsave(file.path(PART2_DIR, "deviation_plot.png"), deviation_plot, width = 10, height = 6)
+    ggsave(file.path(PART2_DIR, "deviation_plot.png"), deviation_plot, width = 10, height = 6, bg = "white")
     
-    # 閾値の決定
+    # Determine threshold
     threshold <- max(subset_results$Deviation)
     cat("\nThreshold for normal behavior (maximum deviation):", threshold, "\n")
     
-    # 閾値情報を保存
+    # Save threshold information
     threshold_info <- paste(
       paste("Threshold for normal behavior (maximum deviation):", threshold),
       paste("\nTraining normalized log-likelihood:", train_norm_ll),
@@ -640,7 +668,7 @@ tryCatch({
     )
     cat(threshold_info, file = file.path(PART2_DIR, "threshold_info.txt"))
     
-    # 閾値を保存
+    # Save threshold
     saveRDS(threshold, file.path(MODELS_DIR, "anomaly_threshold.rds"))
     saveRDS(train_norm_ll, file.path(MODELS_DIR, "train_norm_ll.rds"))
     
@@ -651,7 +679,7 @@ tryCatch({
     ))
   }
 
-  # 閾値計算
+  # Calculate threshold
   threshold_info <- calculate_threshold(best_model, train_df, test_df, "Global_intensity", best_model_norm_ll)
   anomaly_threshold <- threshold_info$threshold
 }, error = function(e) {
@@ -659,11 +687,11 @@ tryCatch({
   cat("Skipping threshold calculation. This won't affect the model selection.\n")
 })
 
-# すべての説明変数に対する簡単な比較
+# Compare all explanatory variables
 compare_variables <- function(train_df, test_df) {
   cat("\nStep 5: Brief comparison of HMM performance on all variables...\n")
   
-  # 各変数のモデルを構築し、BICとログ尤度を計算
+  # Build models for each variable and calculate BIC and log-likelihood
   all_vars <- colnames(train_df)
   var_results <- data.frame(
     Variable = character(),
@@ -680,32 +708,32 @@ compare_variables <- function(train_df, test_df) {
   for(var in all_vars) {
     cat("Training model for variable:", var, "\n")
     
-    # トレーニングモデル
+    # Train model
     tryCatch({
-      # モデル作成
+      # Create model
       set.seed(123)
       var_mod <- depmix(train_df[[var]] ~ 1, nstates = 4, data = train_df)
       var_fitted <- fit(var_mod, verbose = FALSE, emcontrol = em.control(maxit = 200))
       
-      # 評価指標を計算
+      # Calculate evaluation metrics
       train_ll <- logLik(var_fitted)
       train_norm_ll <- train_ll / nrow(train_df)
       bic <- -2 * train_ll + npar(var_fitted) * log(nrow(train_df))
       
-      # テストデータでの評価
+      # Evaluate on test data
       test_mod <- depmix(test_df[[var]] ~ 1, nstates = 4, data = test_df)
       test_mod <- setpars(test_mod, getpars(var_fitted))
       fb <- forwardbackward(test_mod)
       test_ll <- fb$logLike
       test_norm_ll <- test_ll / nrow(test_df)
       
-      # 対数尤度が正か負かの確認
+      # Check if log-likelihood is positive
       notes <- ""
       if(train_ll > 0) {
         notes <- "WARNING: Positive log-likelihood indicates model issues"
       }
       
-      # 結果を表示
+      # Display results
       cat("  Train log-likelihood:", train_ll, "\n")
       cat("  Normalized train log-likelihood:", train_norm_ll, "\n")
       cat("  BIC:", bic, "\n")
@@ -715,7 +743,7 @@ compare_variables <- function(train_df, test_df) {
         cat("  ", notes, "\n")
       }
       
-      # 結果を追加
+      # Add results
       var_results <- rbind(var_results, data.frame(
         Variable = var,
         States = 4,
@@ -744,16 +772,16 @@ compare_variables <- function(train_df, test_df) {
     })
   }
   
-  # 結果をフィルタリング
+  # Filter results
   valid_results <- var_results[var_results$LogLikelihood < 0 & !is.na(var_results$LogLikelihood), ]
   
-  # 結果を表示・保存
+  # Display and save results
   cat("\nComparison of HMM performance on different variables (valid models only):\n")
   if(nrow(valid_results) > 0) {
     print(valid_results[, c("Variable", "States", "LogLikelihood", "BIC", "NormalizedTestLL")])
     write.csv(valid_results, file.path(PART2_DIR, "variable_comparison.csv"), row.names = FALSE)
     
-    # 異常を示した変数があれば警告
+    # Warn if some variables showed unusual behavior
     if(nrow(valid_results) < nrow(var_results)) {
       cat("\nWARNING: Some variables showed unusual behavior and were excluded from comparison.\n")
       cat("Full results including problematic variables:\n")
@@ -769,10 +797,10 @@ compare_variables <- function(train_df, test_df) {
   return(var_results)
 }
 
-# 変数比較
+# Compare variables
 var_results <- compare_variables(train_df, test_df)
 
-# Part 3, 4での利用のためのREADMEファイルを作成
+# Create README file for Parts 3 and 4
 create_readme <- function() {
   readme_content <- paste(
     "# CMPT 318 Term Project - Models and Results\n\n",
