@@ -171,17 +171,69 @@ create_pca_plots <- function(pca_result, features) {
   print(scree_plot)
   ggsave(file.path(PART2_DIR, "pca_scree_plot.png"), scree_plot, width = 10, height = 6, bg = "white")
   
-  # Biplot without labels
+  # Custom PCA biplot with improved visibility
   tryCatch({
-    biplot <- ggbiplot(pca_result, labels = FALSE, groups = NULL) +
-      labs(title = "PCA Biplot of Electricity Consumption Variables") +
-      white_theme
+    # Create a reduced sample for visualization if data is large
+    sample_size <- min(5000, nrow(features))
+    sample_idx <- sample(1:nrow(features), sample_size)
+    
+    # Extract PCA scores for the sample
+    pca_scores <- as.data.frame(pca_result$x[sample_idx, 1:2])
+    names(pca_scores) <- c("PC1", "PC2")
+    
+    # Extract loadings
+    loadings <- as.data.frame(pca_result$rotation[, 1:2])
+    
+    # Create the custom biplot
+    max_score <- max(abs(pca_scores$PC1), abs(pca_scores$PC2))
+    arrow_scale <- max_score / max(abs(loadings$PC1), abs(loadings$PC2)) * 0.8
+    
+    # Define variable name positions
+    var_names <- rownames(loadings)
+    var_x <- loadings$PC1 * arrow_scale * 1.2
+    var_y <- loadings$PC2 * arrow_scale * 1.2
+    
+    # Create the plot
+    biplot <- ggplot() +
+      # Add data points with alpha for density visualization
+      geom_point(data = pca_scores, aes(x = PC1, y = PC2), color = "steelblue", alpha = 0.3, size = 0.8) +
+      # Add arrows for variable loadings
+      geom_segment(data = loadings, aes(x = 0, y = 0, xend = PC1 * arrow_scale, yend = PC2 * arrow_scale),
+                  arrow = arrow(length = unit(0.2, "cm")), color = "red") +
+      # Add variable names
+      geom_text(aes(x = var_x, y = var_y, label = var_names), color = "red", fontface = "bold") +
+      # Add labels and theme
+      labs(title = "PCA Biplot of Electricity Consumption Variables",
+           x = paste0("standardizedPC1 (", round(var_explained[1], 1), "%)"),
+           y = paste0("standardizedPC2 (", round(var_explained[2], 1), "%)")) +
+      theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "#EEEEEE"),
+        panel.grid.minor = element_line(color = "#EEEEEE")
+      )
     
     print(biplot)
     ggsave(file.path(PART2_DIR, "pca_biplot.png"), biplot, width = 10, height = 8, bg = "white")
   }, error = function(e) {
     cat("Error generating biplot:", e$message, "\n")
-    cat("Skipping biplot generation...\n")
+    cat("Trying with standard ggbiplot with modifications...\n")
+    
+    # Fallback to ggbiplot with modifications
+    biplot <- ggbiplot(pca_result, labels = NULL, groups = NULL, ellipse = FALSE, 
+                     var.axes = TRUE, var.scale = 1, alpha = 0.3, size = 0.5) +
+      labs(title = "PCA Biplot of Electricity Consumption Variables") +
+      theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "#EEEEEE"),
+        panel.grid.minor = element_line(color = "#EEEEEE")
+      )
+    
+    print(biplot)
+    ggsave(file.path(PART2_DIR, "pca_biplot.png"), biplot, width = 10, height = 8, bg = "white")
   })
   
   # Loading plot
@@ -367,7 +419,7 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
       
       # Fit model
       cat("Fitting model...\n")
-      hmm_fitted <- fit(hmm_mod, verbose = TRUE)
+      hmm_fitted <- fit(hmm_mod, verbose = TRUE, emcontrol = em.control(maxit = 500))
       
       # Calculate evaluation metrics
       train_ll <- logLik(hmm_fitted)
