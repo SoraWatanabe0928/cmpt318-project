@@ -903,7 +903,7 @@ create_readme <- function() {
     sep = ""
   )
   
-  cat(readme_content, file = file.path(OUTPUT_DIR, "README.md"))
+  cat(readme_content, file = file.path(OUTPUT_DIR, "Model_info.md"))
 }
 
 create_readme()
