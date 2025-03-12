@@ -901,7 +901,7 @@ create_readme <- function() {
     sep = ""
   )
   
-  cat(readme_content, file = file.path(OUTPUT_DIR, "Model_info.md"))
+  cat(readme_content, file = file.path(OUTPUT_DIR, "README.md"))
 }
 
 create_readme()
