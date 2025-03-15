@@ -56,3 +56,6 @@ if (!dir.exists("data/processed")) {
 }
 write.csv(sdf, "data/processed/TermProjectData_Standardized.csv", row.names = FALSE)
 cat("Processed data saved to data/processed/TermProjectData_Standardized.csv\n")
+
+write.table(sdf, "data/processed/TermProjectData_Standardized.txt", row.names = FALSE, append = FALSE, sep = ",")
+cat("Processed data saved to data/processed/TermProjectData_Standardized.txt\n")
