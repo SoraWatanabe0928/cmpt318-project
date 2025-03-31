@@ -1,0 +1,23 @@
+Variable Selection Rationale Based on PCA:
+
+1. Global_active_power:
+   - Highest positive loading on PC1 (0.4689)
+   - Represents overall power consumption in the household
+   - Captures the largest variance in the dataset
+
+2. Voltage:
+   - Strong negative loading on PC1 (-0.329)
+   - Low correlation with Global_active_power (-0.2959)
+   - Represents supply conditions from the electricity network
+   - Provides information complementary to power consumption
+
+3. Sub_metering_3:
+   - High loading on PC2 (0.4725)
+   - Low correlation with both Global_active_power (0.4435) and Voltage (-0.2819)
+   - Represents a specific category of appliance usage
+   - Adds information that is not captured by the other two variables
+
+This selection ensures our model uses variables that:
+1. Capture different dimensions of the data (different principal components)
+2. Have minimal redundancy (low correlation between variables)
+3. Collectively explain a significant portion of the variance in the dataset

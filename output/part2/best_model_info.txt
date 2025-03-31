@@ -1,4 +1,4 @@
-Best model based on BIC: 6 states
+Best model based on BIC: 12 states
 Model validity: Valid (negative log-likelihood)
-Log-likelihood: -755.499586646297
-Normalized train log-likelihood: -0.0235358126681089
+Log-likelihood: -9052.93344027131
+Normalized train log-likelihood: -0.282022848606583
