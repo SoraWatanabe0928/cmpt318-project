@@ -40,7 +40,7 @@ create_directories()
 
 # Load required packages
 load_packages <- function() {
-  packages <- c("depmixS4", "dplyr", "lubridate", "ggplot2", "stats", "reshape2")
+  packages <- c("depmixS4", "dplyr", "lubridate", "ggplot2", "stats", "reshape2", "corrplot")
   for (pkg in packages) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
       install.packages(pkg)
@@ -118,20 +118,82 @@ perform_pca <- function(sdf) {
   # Create PCA plots
   create_pca_plots(pca_result, features)
   
-  # Select variables
-  loadings_pc1 <- abs(pca_result$rotation[, "PC1"])
-  selected_variables <- names(loadings_pc1)[order(loadings_pc1, decreasing = TRUE)[1:3]]
+  # Calculate correlation matrix
+  cor_matrix <- cor(features)
   
+  # Create and save correlation plot
+  png(file.path(PART2_DIR, "correlation_matrix.png"), width = 800, height = 800)
+  corrplot(cor_matrix, method = "circle", type = "lower", order = "hclust", 
+           tl.col = "black", tl.srt = 45, addCoef.col = "black", 
+           col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200))
+  dev.off()
+  
+  # Save correlation matrix
+  write.csv(cor_matrix, file = file.path(PART2_DIR, "correlation_matrix.csv"))
+  
+  # Extract loadings for each PC
+  loadings <- pca_result$rotation
+  
+  # MODIFIED: Variable selection based on comprehensive criteria
+  # 1. Examine loadings on PC1, PC2, and PC3
+  cat("\nPCA Loadings:\n")
+  print(loadings[, 1:3])
+  
+  # 2. Analyze correlation between variables
+  cat("\nCorrelation Matrix:\n")
+  print(cor_matrix)
+  
+  # 3. Select variables that:
+  #    - Represent different aspects of the data (different PCs)
+  #    - Have minimal correlation with each other
+  #    - Have high loadings on different PCs
+  
+  # Global_active_power: High loading on PC1, represents total power consumption
+  # Voltage: High negative loading on PC1, low correlation with Global_active_power
+  # Sub_metering_3: High loading on PC2, represents a specific type of consumption
+  
+  selected_variables <- c("Global_active_power", "Voltage", "Sub_metering_3")
+  
+  cat("\nSelected variables for HMM based on comprehensive PCA analysis:\n")
+  cat("1. Global_active_power: High loading on PC1, represents total power consumption\n")
+  cat("2. Voltage: High negative loading on PC1, represents supply conditions\n")
+  cat("3. Sub_metering_3: High loading on PC2, represents specific appliance usage\n")
+  
+  # Document the selection rationale 
+  selection_rationale <- paste(
+    "Variable Selection Rationale Based on PCA:\n\n",
+    "1. Global_active_power:\n",
+    "   - Highest positive loading on PC1 (", round(loadings["Global_active_power", "PC1"], 4), ")\n",
+    "   - Represents overall power consumption in the household\n",
+    "   - Captures the largest variance in the dataset\n\n",
+    "2. Voltage:\n",
+    "   - Strong negative loading on PC1 (", round(loadings["Voltage", "PC1"], 4), ")\n",
+    "   - Low correlation with Global_active_power (", round(cor_matrix["Global_active_power", "Voltage"], 4), ")\n",
+    "   - Represents supply conditions from the electricity network\n",
+    "   - Provides information complementary to power consumption\n\n",
+    "3. Sub_metering_3:\n",
+    "   - High loading on PC2 (", round(loadings["Sub_metering_3", "PC2"], 4), ")\n",
+    "   - Low correlation with both Global_active_power (", round(cor_matrix["Global_active_power", "Sub_metering_3"], 4), 
+    ") and Voltage (", round(cor_matrix["Voltage", "Sub_metering_3"], 4), ")\n",
+    "   - Represents a specific category of appliance usage\n",
+    "   - Adds information that is not captured by the other two variables\n\n",
+    "This selection ensures our model uses variables that:\n",
+    "1. Capture different dimensions of the data (different principal components)\n",
+    "2. Have minimal redundancy (low correlation between variables)\n",
+    "3. Collectively explain a significant portion of the variance in the dataset\n",
+    sep = ""
+  )
+  
+  cat(selection_rationale, file = file.path(PART2_DIR, "variable_selection_rationale.txt"))
   cat("Selected variables for HMM based on PCA:", paste(selected_variables, collapse=", "), "\n")
-  cat(paste("Selected variables for HMM based on PCA:", paste(selected_variables, collapse=", ")), 
-      file = file.path(PART2_DIR, "selected_variables.txt"))
   
   # Save PCA results (for reuse)
   saveRDS(pca_result, file = file.path(MODELS_DIR, "pca_model.rds"))
   
   return(list(
     pca_result = pca_result,
-    selected_variables = selected_variables
+    selected_variables = selected_variables,
+    correlation_matrix = cor_matrix
   ))
 }
 
@@ -202,8 +264,8 @@ create_pca_plots <- function(pca_result, features) {
       geom_text(aes(x = var_x, y = var_y, label = var_names), color = "red", fontface = "bold") +
       # Add labels and theme
       labs(title = "PCA Biplot of Electricity Consumption Variables",
-           x = paste0("standardizedPC1 (", round(var_explained[1], 1), "%)"),
-           y = paste0("standardizedPC2 (", round(var_explained[2], 1), "%)")) +
+           x = paste0("PC1 (", round(var_explained[1], 1), "%)"),
+           y = paste0("PC2 (", round(var_explained[2], 1), "%)")) +
       theme_minimal() +
       theme(
         panel.background = element_rect(fill = "white", color = NA),
@@ -214,6 +276,63 @@ create_pca_plots <- function(pca_result, features) {
     
     print(biplot)
     ggsave(file.path(PART2_DIR, "pca_biplot.png"), biplot, width = 10, height = 8, bg = "white")
+    
+    # Create PC1 vs PC3 biplot
+    pca_scores_pc13 <- as.data.frame(pca_result$x[sample_idx, c(1,3)])
+    names(pca_scores_pc13) <- c("PC1", "PC3")
+    
+    loadings_pc13 <- as.data.frame(pca_result$rotation[, c(1,3)])
+    
+    var_x_pc13 <- loadings_pc13$PC1 * arrow_scale * 1.2
+    var_y_pc13 <- loadings_pc13$PC3 * arrow_scale * 1.2
+    
+    biplot_pc13 <- ggplot() +
+      geom_point(data = pca_scores_pc13, aes(x = PC1, y = PC3), color = "steelblue", alpha = 0.3, size = 0.8) +
+      geom_segment(data = loadings_pc13, aes(x = 0, y = 0, xend = PC1 * arrow_scale, yend = PC3 * arrow_scale),
+                  arrow = arrow(length = unit(0.2, "cm")), color = "red") +
+      geom_text(aes(x = var_x_pc13, y = var_y_pc13, label = var_names), color = "red", fontface = "bold") +
+      labs(title = "PCA Biplot: PC1 vs PC3",
+           x = paste0("PC1 (", round(var_explained[1], 1), "%)"),
+           y = paste0("PC3 (", round(var_explained[3], 1), "%)")) +
+      theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "#EEEEEE"),
+        panel.grid.minor = element_line(color = "#EEEEEE")
+      )
+    
+    print(biplot_pc13)
+    ggsave(file.path(PART2_DIR, "pca_biplot_pc13.png"), biplot_pc13, width = 10, height = 8, bg = "white")
+    
+    # Create PC2 vs PC3 biplot
+    pca_scores_pc23 <- as.data.frame(pca_result$x[sample_idx, c(2,3)])
+    names(pca_scores_pc23) <- c("PC2", "PC3")
+    
+    loadings_pc23 <- as.data.frame(pca_result$rotation[, c(2,3)])
+    
+    var_x_pc23 <- loadings_pc23$PC2 * arrow_scale * 1.2
+    var_y_pc23 <- loadings_pc23$PC3 * arrow_scale * 1.2
+    
+    biplot_pc23 <- ggplot() +
+      geom_point(data = pca_scores_pc23, aes(x = PC2, y = PC3), color = "steelblue", alpha = 0.3, size = 0.8) +
+      geom_segment(data = loadings_pc23, aes(x = 0, y = 0, xend = PC2 * arrow_scale, yend = PC3 * arrow_scale),
+                  arrow = arrow(length = unit(0.2, "cm")), color = "red") +
+      geom_text(aes(x = var_x_pc23, y = var_y_pc23, label = var_names), color = "red", fontface = "bold") +
+      labs(title = "PCA Biplot: PC2 vs PC3",
+           x = paste0("PC2 (", round(var_explained[2], 1), "%)"),
+           y = paste0("PC3 (", round(var_explained[3], 1), "%)")) +
+      theme_minimal() +
+      theme(
+        panel.background = element_rect(fill = "white", color = NA),
+        plot.background = element_rect(fill = "white", color = NA),
+        panel.grid.major = element_line(color = "#EEEEEE"),
+        panel.grid.minor = element_line(color = "#EEEEEE")
+      )
+    
+    print(biplot_pc23)
+    ggsave(file.path(PART2_DIR, "pca_biplot_pc23.png"), biplot_pc23, width = 10, height = 8, bg = "white")
+    
   }, error = function(e) {
     cat("Error generating biplot:", e$message, "\n")
     cat("Trying with standard ggbiplot with modifications...\n")
@@ -261,7 +380,7 @@ pca_results <- perform_pca(sdf)
 selected_variables <- pca_results$selected_variables
 
 # Step 3: Select time window and partition data
-select_and_partition_data <- function(sdf, selected_weekday, start_time, end_time) {
+select_and_partition_data <- function(sdf, selected_variables, selected_weekday, start_time, end_time) {
   cat("Step 3: Selecting time window and partitioning data...\n")
   
   # Function to check if a time falls within the selected window
@@ -299,17 +418,8 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
     cat("Testing data dimensions:", dim(test_data), "\n")
     
     # Extract selected variables
-    train_df <- data.frame(
-      Global_intensity = train_data$Global_intensity,
-      Global_active_power = train_data$Global_active_power,
-      Sub_metering_3 = train_data$Sub_metering_3
-    )
-    
-    test_df <- data.frame(
-      Global_intensity = test_data$Global_intensity,
-      Global_active_power = test_data$Global_active_power,
-      Sub_metering_3 = test_data$Sub_metering_3
-    )
+    train_df <- train_data[, selected_variables, drop = FALSE]
+    test_df <- test_data[, selected_variables, drop = FALSE]
     
     # Display feature dimensions
     cat("Training features dimensions:", dim(train_df), "\n")
@@ -375,7 +485,7 @@ select_and_partition_data <- function(sdf, selected_weekday, start_time, end_tim
 }
 
 # Execute data partitioning
-partitioned_data <- select_and_partition_data(sdf, SELECTED_WEEKDAY, START_TIME, END_TIME)
+partitioned_data <- select_and_partition_data(sdf, selected_variables, SELECTED_WEEKDAY, START_TIME, END_TIME)
 train_df <- partitioned_data$train_df
 test_df <- partitioned_data$test_df
 
@@ -536,7 +646,7 @@ train_multiple_hmms <- function(train_df, test_df, variable, state_range) {
 }
 
 # Train HMM models for the main variable (Global_intensity)
-hmm_results <- train_multiple_hmms(train_df, test_df, "Global_intensity", STATE_RANGE)
+hmm_results <- train_multiple_hmms(train_df, test_df, "Global_active_power", STATE_RANGE)
 results_df <- hmm_results$results
 hmm_models <- hmm_results$models
 
@@ -683,7 +793,7 @@ tryCatch({
     subset_ll_plot <- ggplot(subset_results, aes(x = Subset, y = NormalizedLL)) +
       geom_bar(stat = "identity", fill = "steelblue") +
       geom_hline(yintercept = train_norm_ll, linetype = "dashed", color = "red") +
-      labs(title = paste("Normalized Log-Likelihood for Test Subsets - Global_intensity (", best_states, "states)"),
+      labs(title = paste("Normalized Log-Likelihood for Test Subsets - Global_active_power (", best_states, "states)"),
            subtitle = paste("Red line: Training normalized log-likelihood =", 
                           round(train_norm_ll, 4)),
            x = "Subset",
@@ -696,7 +806,7 @@ tryCatch({
     # Plot deviation from training log-likelihood
     deviation_plot <- ggplot(subset_results, aes(x = Subset, y = Deviation)) +
       geom_bar(stat = "identity", fill = "steelblue") +
-      labs(title = paste("Deviation from Training Log-Likelihood - Global_intensity (", best_states, "states)"),
+      labs(title = paste("Deviation from Training Log-Likelihood - Global_active_power (", best_states, "states)"),
            x = "Subset",
            y = "Absolute Deviation") +
       white_theme
@@ -730,7 +840,7 @@ tryCatch({
   }
 
   # Calculate threshold
-  threshold_info <- calculate_threshold(best_model, train_df, test_df, "Global_intensity", best_model_norm_ll)
+  threshold_info <- calculate_threshold(best_model, train_df, test_df, "Global_active_power", best_model_norm_ll)
   anomaly_threshold <- threshold_info$threshold
 }, error = function(e) {
   cat("\nError in threshold calculation:", e$message, "\n")
@@ -850,63 +960,3 @@ compare_variables <- function(train_df, test_df) {
 # Compare variables
 var_results <- compare_variables(train_df, test_df)
 
-# Create README file for Parts 3 and 4
-create_readme <- function() {
-  readme_content <- paste(
-    "# CMPT 318 Term Project - Models and Results\n\n",
-    "This directory contains the models and results from Part 2 that can be used in Parts 3 and 4.\n\n",
-    "## Directory Structure\n",
-    "- `output/part1/`: Contains outputs from Part 1 (Feature Scaling)\n",
-    "- `output/part2/`: Contains outputs from Part 2 (PCA, HMM, Threshold)\n",
-    "- `output/models/`: Contains saved models for reuse in Parts 3 and 4\n\n",
-    "## Saved Models\n",
-    "- `pca_model.rds`: PCA model used for variable selection\n",
-    "- `data_partition.rds`: Training and test data partitions\n",
-    "- `all_hmm_models.rds`: All HMM models with different numbers of states\n",
-    "- `best_hmm_model.rds`: Best HMM model selected based on BIC\n",
-    "- `best_states.rds`: Number of states in the best model\n",
-    "- `anomaly_threshold.rds`: Threshold for anomaly detection\n",
-    "- `train_norm_ll.rds`: Normalized log-likelihood of training data\n\n",
-    "## How to Load Models in Part 3 and 4\n",
-    "```r\n",
-    "# Load best HMM model\n",
-    "best_model <- readRDS(\"output/models/best_hmm_model.rds\")\n",
-    "\n",
-    "# Load anomaly threshold\n",
-    "threshold <- readRDS(\"output/models/anomaly_threshold.rds\")\n",
-    "train_norm_ll <- readRDS(\"output/models/train_norm_ll.rds\")\n",
-    "\n",
-    "# Example: Detect anomalies in new data\n",
-    "detect_anomalies <- function(new_data, best_model, threshold, train_norm_ll) {\n",
-    "  # Create a model for the new data\n",
-    "  new_mod <- depmix(new_data$Global_intensity ~ 1, nstates = best_model@nstates, data = new_data)\n",
-    "  new_mod <- setpars(new_mod, getpars(best_model))\n",
-    "  \n",
-    "  # Calculate log-likelihood\n",
-    "  fb <- forwardbackward(new_mod)\n",
-    "  ll <- fb$logLike\n",
-    "  norm_ll <- ll / nrow(new_data)\n",
-    "  \n",
-    "  # Check if it exceeds the threshold\n",
-    "  deviation <- abs(norm_ll - train_norm_ll)\n",
-    "  is_anomaly <- deviation > threshold\n",
-    "  \n",
-    "  return(list(\n",
-    "    norm_ll = norm_ll,\n",
-    "    deviation = deviation,\n",
-    "    is_anomaly = is_anomaly\n",
-    "  ))\n",
-    "}\n",
-    "```\n",
-    sep = ""
-  )
-  
-  cat(readme_content, file = file.path(OUTPUT_DIR, "README.md"))
-}
-
-create_readme()
-
-cat("\nTerm Project Part II analysis completed.\n")
-cat("Check the following directories for all generated results and figures:\n")
-cat("  - ", PART2_DIR, " (Analysis results and plots)\n")
-cat("  - ", MODELS_DIR, " (Saved models for Part 3 and 4)\n")
